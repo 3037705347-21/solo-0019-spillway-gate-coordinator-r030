@@ -79,3 +79,31 @@ func fixtureClearReview(
 	}
 	return command, nil
 }
+
+func fixtureApproveCommand(
+	client *apiClient,
+	commandID string,
+	verifiers ...string,
+) (map[string]any, error) {
+	if len(verifiers) == 0 {
+		return nil, fmt.Errorf("approve fixture requires at least one verifier")
+	}
+
+	var command map[string]any
+	for _, verifier := range verifiers {
+		reviewed, err := fixtureClearReview(client, commandID, verifier)
+		if err != nil {
+			return nil, err
+		}
+		command = reviewed
+	}
+
+	status, err := stringField(command, "status")
+	if err != nil {
+		return nil, err
+	}
+	if status != "approved" {
+		return nil, fmt.Errorf("approve fixture: expected approved, got %q", status)
+	}
+	return command, nil
+}

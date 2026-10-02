@@ -104,16 +104,20 @@ func (m *MemoryRepository) ReviewCommand(
 	}
 
 	nextGate := gate
-	if decision.IsClear() {
-		if nextGate.ActiveCommandID == "" {
-			if err := nextGate.Reserve(nextCommand.ID, now); err != nil {
-				return domain.GateCommand{}, domain.Gate{}, err
-			}
-		} else if nextGate.ActiveCommandID != nextCommand.ID {
+	if command.Status != domain.CommandApproved && nextCommand.Status == domain.CommandApproved {
+		if nextGate.ActiveCommandID != "" {
 			return domain.GateCommand{}, domain.Gate{}, domain.Conflict(
 				"gate_already_reserved",
 				"gate already references another active command",
 			)
+		}
+		if err := nextGate.Reserve(nextCommand.ID, now); err != nil {
+			return domain.GateCommand{}, domain.Gate{}, err
+		}
+	}
+	if command.Status == domain.CommandApproved && nextCommand.Status == domain.CommandRejected {
+		if err := nextGate.Release(nextCommand.ID, now); err != nil {
+			return domain.GateCommand{}, domain.Gate{}, err
 		}
 	}
 

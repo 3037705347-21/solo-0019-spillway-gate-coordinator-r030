@@ -54,6 +54,12 @@ func (c *InterlockCycle) Record(decision InterlockDecision) InterlockCycleStatus
 		*c = NewInterlockCycle(1)
 	}
 
+	for _, recorded := range c.Decisions {
+		if recorded.Verifier == decision.Verifier && recorded.Verdict == decision.Verdict {
+			return InterlockCycleDuplicate
+		}
+	}
+
 	decisionCopy := decision
 	c.Decisions = append(c.Decisions, decisionCopy)
 	c.LastUpdated = decision.ReviewedAt.UTC()
@@ -64,7 +70,7 @@ func (c *InterlockCycle) Record(decision InterlockDecision) InterlockCycleStatus
 	}
 
 	c.ApprovedBy = append(c.ApprovedBy, decision.Verifier)
-	if len(c.ApprovedBy) >= RequiredInterlockApprovals {
+	if c.IndependentApprovals() >= RequiredInterlockApprovals {
 		return InterlockCycleApproved
 	}
 	return InterlockCyclePending

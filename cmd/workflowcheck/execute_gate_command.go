@@ -18,7 +18,31 @@ func runExecuteGateCommand(client *apiClient) error {
 		return err
 	}
 
-	approved, err := fixtureClearReview(client, commandID, "safety-he")
+	incomplete, err := fixtureClearReview(client, commandID, "safety-he")
+	if err != nil {
+		return err
+	}
+	incompleteStatus, err := stringField(incomplete, "status")
+	if err != nil {
+		return err
+	}
+	if incompleteStatus != "pending" {
+		return fmt.Errorf("first clear review status: expected pending, got %q", incompleteStatus)
+	}
+
+	early, err := client.post("/commands/"+commandID+"/execute", map[string]any{
+		"operator":       "operator-chen",
+		"token":          "not-issued-yet",
+		"simulate_fault": false,
+	})
+	if err != nil {
+		return err
+	}
+	if err := requireStatus(early, http.StatusConflict, "reject execution before review completes"); err != nil {
+		return err
+	}
+
+	approved, err := fixtureApproveCommand(client, commandID, "safety-wu")
 	if err != nil {
 		return err
 	}
@@ -78,6 +102,6 @@ func runExecuteGateCommand(client *apiClient) error {
 		return err
 	}
 
-	fmt.Println("execute-gate-command: command completed and token reuse rejected")
+	fmt.Println("execute-gate-command: completed review gates execution and token reuse is rejected")
 	return nil
 }

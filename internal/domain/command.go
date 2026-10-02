@@ -96,34 +96,30 @@ func (c *GateCommand) Review(decision InterlockDecision, token string, now time.
 		c.InterlockCycle = NewInterlockCycle(1)
 	}
 
+	cycleStatus := c.InterlockCycle.Record(decision)
+	if cycleStatus == InterlockCycleDuplicate {
+		return nil
+	}
+
 	decisionCopy := decision
 	c.Interlock = &decisionCopy
-	cycleStatus := c.InterlockCycle.Record(decisionCopy)
 	c.UpdatedAt = now.UTC()
 	c.Version++
 
-	if c.Status == CommandApproved && !decision.IsClear() {
-		return nil
-	}
-
-	if decision.IsClear() {
-		token = strings.TrimSpace(token)
-		if token == "" {
-			return Invalid("missing_execution_token", "clear decisions require an execution token")
-		}
-		c.ExecutionToken = token
-		c.Status = CommandApproved
-		return nil
-	}
-
-	if cycleStatus == InterlockCycleRejected {
+	switch cycleStatus {
+	case InterlockCycleRejected:
 		c.ExecutionToken = ""
 		c.Status = CommandRejected
-		return nil
+	case InterlockCycleApproved:
+		if c.Status != CommandApproved {
+			token = strings.TrimSpace(token)
+			if token == "" {
+				return Invalid("missing_execution_token", "clear decisions require an execution token")
+			}
+			c.ExecutionToken = token
+			c.Status = CommandApproved
+		}
 	}
-
-	c.ExecutionToken = ""
-	c.Status = CommandRejected
 	return nil
 }
 

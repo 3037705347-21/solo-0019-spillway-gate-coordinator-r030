@@ -28,7 +28,7 @@
 
 ### review-safety-interlock
 
-安全复核员通过 `POST /commands/{id}/interlock` 提交复核结论。clear 结论会原子占用闸门并签发一次执行令牌；blocked 结论会把命令置为 rejected。其他命令先占用同一闸门时，当前 clear 结论返回冲突且不改变闸门。
+安全复核员通过 `POST /commands/{id}/interlock` 提交复核结论。一条命令需要两名独立复核员的 clear 结论才能通过复核；通过复核的那次 clear 会原子占用闸门并签发一次执行令牌，此前的 clear 只记录复核进度，不占用闸门也不签发令牌。同一复核员重复提交相同结论时不重复计数，命令与闸门状态保持不变。blocked 结论优先于已有 clear 结论，会把命令置为 rejected，回收已签发的执行令牌并释放已占用的闸门。其他命令先占用同一闸门时，当前 clear 结论返回冲突且不改变闸门。
 
 ### execute-gate-command
 
@@ -38,10 +38,10 @@
 
 - `gate` 状态：idle、reserved、moving、faulted。
 - `gate_command` 状态：pending、approved、rejected、executing、completed、aborted。
-- 只有 pending 命令可以复核。
+- 只有 pending 或 approved 命令可以复核。
 - 只有 approved 命令可以执行，且执行令牌必须匹配。
 - clear 复核与闸门占用必须同时成功；任一步失败时两者都不写入。
-- blocked 复核使命令 rejected，不会占用闸门。
+- blocked 复核使命令 rejected，不会占用闸门；已占用的闸门随之释放，已签发的令牌立即失效。
 - 模拟故障会令命令 aborted、闸门 faulted，并保留最终开度。
 - 已完成或已中止的命令不能再次执行。
 
