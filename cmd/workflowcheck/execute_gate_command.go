@@ -18,12 +18,58 @@ func runExecuteGateCommand(client *apiClient) error {
 		return err
 	}
 
-	approved, err := fixtureClearReview(client, commandID, "safety-he")
+	// Only one independent clear: the command must still refuse execution.
+	firstReview, err := fixtureClearReview(client, commandID, "safety-he")
+	if err != nil {
+		return err
+	}
+	pendingStatus, err := stringField(firstReview, "status")
+	if err != nil {
+		return err
+	}
+	if pendingStatus != "pending" {
+		return fmt.Errorf("single clear review status: expected pending, got %q", pendingStatus)
+	}
+	premature, err := client.post("/commands/"+commandID+"/execute", map[string]any{
+		"operator":       "operator-chen",
+		"token":          "any-token",
+		"simulate_fault": false,
+	})
+	if err != nil {
+		return err
+	}
+	if err := requireStatus(premature, http.StatusConflict, "reject execution before review completes"); err != nil {
+		return err
+	}
+
+	// Retrying the first reviewer must not complete the review either.
+	if _, err := fixtureClearReview(client, commandID, "safety-he"); err != nil {
+		return err
+	}
+
+	approved, err := fixtureClearReview(client, commandID, "safety-luo")
 	if err != nil {
 		return err
 	}
 	token, err := stringField(approved, "execution_token")
 	if err != nil {
+		return err
+	}
+	if token == "" {
+		return fmt.Errorf("completed review did not issue an execution token")
+	}
+
+	// A stale token minted by an earlier transient response must not work;
+	// only the token bound to the approved fact is accepted.
+	stale, err := client.post("/commands/"+commandID+"/execute", map[string]any{
+		"operator":       "operator-chen",
+		"token":          "stale-token-from-retried-review",
+		"simulate_fault": false,
+	})
+	if err != nil {
+		return err
+	}
+	if err := requireStatus(stale, http.StatusConflict, "reject stale execution token"); err != nil {
 		return err
 	}
 
@@ -78,6 +124,52 @@ func runExecuteGateCommand(client *apiClient) error {
 		return err
 	}
 
-	fmt.Println("execute-gate-command: command completed and token reuse rejected")
+	// The simulated-fault path must keep its original failure semantics.
+	if _, err := fixtureGate(client, "gate-east-fault", "东侧故障闸", 4, 0.25); err != nil {
+		return err
+	}
+	faultCommand, err := fixtureCommand(client, "gate-east-fault", 3.0, "故障演练", "dispatcher-zhao")
+	if err != nil {
+		return err
+	}
+	faultID, err := stringField(faultCommand, "id")
+	if err != nil {
+		return err
+	}
+	if _, err := fixtureClearReview(client, faultID, "safety-he"); err != nil {
+		return err
+	}
+	faultApproved, err := fixtureClearReview(client, faultID, "safety-luo")
+	if err != nil {
+		return err
+	}
+	faultToken, err := stringField(faultApproved, "execution_token")
+	if err != nil {
+		return err
+	}
+	faultResult, err := client.post("/commands/"+faultID+"/execute", map[string]any{
+		"operator":       "operator-chen",
+		"token":          faultToken,
+		"simulate_fault": true,
+	})
+	if err != nil {
+		return err
+	}
+	if err := requireStatus(faultResult, http.StatusOK, "execute fault simulation"); err != nil {
+		return err
+	}
+	faultGate, err := objectField(faultResult.Body, "gate")
+	if err != nil {
+		return err
+	}
+	faultGateStatus, err := stringField(faultGate, "status")
+	if err != nil {
+		return err
+	}
+	if faultGateStatus != "faulted" {
+		return fmt.Errorf("fault execution: expected faulted gate, got %q", faultGateStatus)
+	}
+
+	fmt.Println("execute-gate-command: completed command rejects stale/reused tokens; fault semantics preserved")
 	return nil
 }

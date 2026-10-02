@@ -99,12 +99,21 @@ func (m *MemoryRepository) ReviewCommand(
 	}
 
 	nextCommand := cloneCommand(command)
-	if err := nextCommand.Review(decision, token, now); err != nil {
+	changed, err := nextCommand.Review(decision, token, now)
+	if err != nil {
 		return domain.GateCommand{}, domain.Gate{}, err
+	}
+	if !changed {
+		// Idempotent replay of a reviewer's verdict: return the single
+		// recorded fact without touching the gate or issuing a new token.
+		return cloneCommand(command), gate, nil
 	}
 
 	nextGate := gate
-	if decision.IsClear() {
+	if nextCommand.Status == domain.CommandApproved {
+		// Approval and gate occupancy commit together under the repository
+		// lock. A reservation failure rolls back the whole review so an
+		// approved command can never point at an unreserved gate.
 		if nextGate.ActiveCommandID == "" {
 			if err := nextGate.Reserve(nextCommand.ID, now); err != nil {
 				return domain.GateCommand{}, domain.Gate{}, err

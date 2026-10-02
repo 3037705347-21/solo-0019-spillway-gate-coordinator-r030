@@ -28,6 +28,7 @@ const (
 	InterlockCycleApproved  InterlockCycleStatus = "approved"
 	InterlockCycleRejected  InterlockCycleStatus = "rejected"
 	InterlockCycleDuplicate InterlockCycleStatus = "duplicate"
+	InterlockCycleConflict  InterlockCycleStatus = "conflict"
 )
 
 type InterlockCycle struct {
@@ -49,9 +50,24 @@ func NewInterlockCycle(round int) InterlockCycle {
 	}
 }
 
+// Record applies a review decision to the cycle.
+//
+// Decisions are keyed by verifier: replaying the same verifier's verdict is a
+// retry (duplicate) and never adds weight, so unstable network retries cannot
+// inflate the approval count. A verifier changing their recorded verdict is a
+// conflict and is refused. Independent clear verdicts from distinct
+// verifiers advance the cycle; RequiredInterlockApprovals of them complete it,
+// and any single blocked verdict rejects the whole adjustment.
 func (c *InterlockCycle) Record(decision InterlockDecision) InterlockCycleStatus {
 	if c.Round < 1 {
 		*c = NewInterlockCycle(1)
+	}
+
+	if prior, ok := c.VerdictByVerifier(decision.Verifier); ok {
+		if prior == decision.Verdict {
+			return InterlockCycleDuplicate
+		}
+		return InterlockCycleConflict
 	}
 
 	decisionCopy := decision
@@ -64,10 +80,20 @@ func (c *InterlockCycle) Record(decision InterlockDecision) InterlockCycleStatus
 	}
 
 	c.ApprovedBy = append(c.ApprovedBy, decision.Verifier)
-	if len(c.ApprovedBy) >= RequiredInterlockApprovals {
+	if c.IndependentApprovals() >= RequiredInterlockApprovals {
 		return InterlockCycleApproved
 	}
 	return InterlockCyclePending
+}
+
+// VerdictByVerifier returns the verdict already recorded by a verifier.
+func (c InterlockCycle) VerdictByVerifier(verifier string) (InterlockVerdict, bool) {
+	for _, decision := range c.Decisions {
+		if decision.Verifier == verifier {
+			return decision.Verdict, true
+		}
+	}
+	return "", false
 }
 
 func (c InterlockCycle) Clone() InterlockCycle {

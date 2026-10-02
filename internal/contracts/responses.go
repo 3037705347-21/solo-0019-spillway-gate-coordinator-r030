@@ -23,6 +23,14 @@ type GateView struct {
 	Version         int64   `json:"version"`
 }
 
+type InterlockCycleView struct {
+	Round                int                     `json:"round"`
+	Status               string                  `json:"status"`
+	IndependentApprovals int                     `json:"independent_approvals"`
+	RequiredApprovals    int                     `json:"required_approvals"`
+	Decisions            []InterlockDecisionView `json:"decisions,omitempty"`
+}
+
 type CommandView struct {
 	ID               string                 `json:"id"`
 	GateID           string                 `json:"gate_id"`
@@ -32,6 +40,7 @@ type CommandView struct {
 	RequestedBy      string                 `json:"requested_by"`
 	Status           string                 `json:"status"`
 	Interlock        *InterlockDecisionView `json:"interlock,omitempty"`
+	InterlockCycle   *InterlockCycleView    `json:"interlock_cycle,omitempty"`
 	ExecutionToken   string                 `json:"execution_token,omitempty"`
 	ExecutedBy       string                 `json:"executed_by,omitempty"`
 	TerminalReason   string                 `json:"terminal_reason,omitempty"`

@@ -88,43 +88,73 @@ func NewGateCommand(
 	}, nil
 }
 
-func (c *GateCommand) Review(decision InterlockDecision, token string, now time.Time) error {
-	if c.Status != CommandPending && c.Status != CommandApproved {
-		return Conflict("command_not_pending", "only pending or approved commands can be reviewed")
+// Review applies one safety interlock decision to a pending command.
+//
+// The command only becomes approved once the full multi-person review cycle
+// independently clears it; until then it stays pending and carries no token,
+// so the gate must not be reserved either. Any blocked verdict rejects the
+// adjustment outright: command status, gate reservation and execution
+// credentials then describe one and the same terminal fact.
+//
+// Replaying a verifier's identical verdict is idempotent and reports changed
+// == false: a retried request returns the already recorded fact instead of
+// minting a new token or double counting the approval. A verifier
+// contradicting their own recorded verdict is refused as a conflict. Approval
+// and gate reservation stay coupled: the caller only reserves the gate when
+// status transitions to approved.
+func (c *GateCommand) Review(decision InterlockDecision, token string, now time.Time) (changed bool, err error) {
+	if c.Status != CommandPending {
+		// A reviewer retrying over an unstable link after the cycle closed
+		// gets the already recorded fact back, including the same token; a
+		// fresh opinion on a finished adjustment is refused instead so a
+		// terminal adjustment can never become executable again.
+		if prior, ok := c.InterlockCycle.VerdictByVerifier(decision.Verifier); ok && prior == decision.Verdict {
+			return false, nil
+		}
+		return false, Conflict("command_not_pending", "only pending commands can be reviewed")
 	}
 	if c.InterlockCycle.Round == 0 {
 		c.InterlockCycle = NewInterlockCycle(1)
 	}
 
-	decisionCopy := decision
-	c.Interlock = &decisionCopy
-	cycleStatus := c.InterlockCycle.Record(decisionCopy)
+	cycleStatus := c.InterlockCycle.Record(decision)
+	switch cycleStatus {
+	case InterlockCycleDuplicate:
+		// Replayed verdict: the recorded fact already stands. Nothing is
+		// rewritten and no new token is issued.
+		return false, nil
+	case InterlockCycleConflict:
+		return false, Conflict("interlock_verdict_conflict", "verifier already recorded a different verdict")
+	}
+
 	c.UpdatedAt = now.UTC()
 	c.Version++
 
-	if c.Status == CommandApproved && !decision.IsClear() {
-		return nil
-	}
+	decisionCopy := decision
+	c.Interlock = &decisionCopy
 
-	if decision.IsClear() {
-		token = strings.TrimSpace(token)
-		if token == "" {
-			return Invalid("missing_execution_token", "clear decisions require an execution token")
-		}
-		c.ExecutionToken = token
-		c.Status = CommandApproved
-		return nil
-	}
-
-	if cycleStatus == InterlockCycleRejected {
+	if !decision.IsClear() {
+		// One blocked verdict terminates the adjustment. The gate has never
+		// been reserved while review is still open, so nothing is left to
+		// undo, and any token slot is cleared.
 		c.ExecutionToken = ""
 		c.Status = CommandRejected
-		return nil
+		return true, nil
 	}
 
-	c.ExecutionToken = ""
-	c.Status = CommandRejected
-	return nil
+	// Clear verdict but the cycle is still open: keep waiting for the
+	// remaining independent reviewers. No approval, no token, no occupancy.
+	if cycleStatus == InterlockCyclePending {
+		return true, nil
+	}
+
+	token = strings.TrimSpace(token)
+	if token == "" {
+		return false, Invalid("missing_execution_token", "clear decisions require an execution token")
+	}
+	c.ExecutionToken = token
+	c.Status = CommandApproved
+	return true, nil
 }
 
 func (c *GateCommand) BeginExecution(token, operator string, now time.Time) error {

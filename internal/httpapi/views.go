@@ -44,12 +44,49 @@ func commandView(command domain.GateCommand, includeToken bool) contracts.Comman
 		view.ExecutionToken = command.ExecutionToken
 	}
 	if command.Interlock != nil {
-		view.Interlock = &contracts.InterlockDecisionView{
-			Verdict:    string(command.Interlock.Verdict),
-			Verifier:   command.Interlock.Verifier,
-			Note:       command.Interlock.Note,
-			ReviewedAt: formatTime(command.Interlock.ReviewedAt),
-		}
+		view.Interlock = interlockDecisionView(*command.Interlock)
+	}
+	if command.InterlockCycle.Round > 0 {
+		view.InterlockCycle = interlockCycleView(command)
 	}
 	return view
+}
+
+func interlockDecisionView(decision domain.InterlockDecision) *contracts.InterlockDecisionView {
+	return &contracts.InterlockDecisionView{
+		Verdict:    string(decision.Verdict),
+		Verifier:   decision.Verifier,
+		Note:       decision.Note,
+		ReviewedAt: formatTime(decision.ReviewedAt),
+	}
+}
+
+// interlockCycleView projects the review state so the control room can tell
+// whether the adjustment is still under review, fully cleared or rejected,
+// independent of any single reviewer's retried response.
+func interlockCycleView(command domain.GateCommand) *contracts.InterlockCycleView {
+	cycle := command.InterlockCycle
+	// The review outcome is derived from the recorded decisions themselves,
+	// not the command's later execution phase, so it stays explainable after
+	// the command completes or aborts.
+	status := string(domain.InterlockCyclePending)
+	switch {
+	case cycle.HasRejection():
+		status = string(domain.InterlockCycleRejected)
+	case cycle.IndependentApprovals() >= domain.RequiredInterlockApprovals:
+		status = string(domain.InterlockCycleApproved)
+	}
+
+	decisions := make([]contracts.InterlockDecisionView, 0, len(cycle.Decisions))
+	for _, decision := range cycle.Decisions {
+		decisions = append(decisions, *interlockDecisionView(decision))
+	}
+
+	return &contracts.InterlockCycleView{
+		Round:                cycle.Round,
+		Status:               status,
+		IndependentApprovals: cycle.IndependentApprovals(),
+		RequiredApprovals:    domain.RequiredInterlockApprovals,
+		Decisions:            decisions,
+	}
 }

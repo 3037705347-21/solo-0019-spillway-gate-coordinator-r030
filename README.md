@@ -54,6 +54,8 @@ POST /commands/{id}/execute
 }
 ```
 
+一次调整需要两名**不同**复核员的 clear 结论才会通过。第一个 clear 只登记意见，命令保持 `pending`、不签发令牌、闸门保持 `idle`；第二个不同复核员的 clear 才原子地把命令置为 `approved`、占用闸门并签发一次性执行令牌。任一 `blocked` 结论立即将命令置为 `rejected`，且不会占用闸门。通信不稳时由同一复核员重试相同结论是幂等的：返回同一事实、不重复计数、令牌不轮换；复核员推翻自己已记录的结论会被拒绝。终态命令（rejected/completed/aborted）不能被重新复核或重新执行。
+
 执行示例：
 
 ```json
